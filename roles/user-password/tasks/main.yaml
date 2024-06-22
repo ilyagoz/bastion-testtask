@@ -1,0 +1,57 @@
+---
+- name: Проверить подключение к Windows
+  ansible.windows.win_ping:
+  when: ansible_os_family == "Windows"
+- name: Проверить подключение к Linux
+  ansible.builtin.ping:
+  when: ansible_system == "Linux"
+
+- block:
+    - name: Проверить, существует ли пользователь Linux
+      become: true
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ user }}"
+      ignore_errors: true
+      register: user_exists_linux
+    - name: Сообщить, если пользователь Linux не существует
+      ansible.builtin.fail:
+        msg: "Пользователь Linux {{ user }} не существует."
+      when: user_exists_linux.failed
+
+    - name: Сменить пароль пользователя Linux
+      become: true
+      ansible.builtin.user:
+        name: '{{ user }}'
+        update_password: always
+        password: "{{ password | password_hash }}"
+        shell: /bin/bash
+      no_log: true
+      when: not user_exists_linux.failed
+
+    - name: Установить флаг "пароль устарел"
+      become: true
+      ansible.builtin.command:
+        cmd: passwd --expire "{{ user }}"
+      when: not user_exists_linux.failed
+  when: ansible_system == "Linux"
+
+- block:  
+    - name: Проверить, существует ли пользователь Windows
+      ansible.windows.win_command:
+        cmd: net user "{{ user }}"
+      ignore_errors: true
+      register: user_exists_win
+    - name: Сообщить, если пользователь Windows не существует
+      ansible.builtin.fail:
+        msg: "Пользователь Windows {{ user }} не существует."
+      when: user_exists_win.failed
+    - name: Сменить пароль пользователя Windows
+      ansible.windows.win_user:
+        name: '{{ user }}'
+        update_password: always
+        password: "{{ password }}"
+        password_expired: true
+      no_log: true
+      when: not user_exists_win.failed
+  when: ansible_os_family == "Windows"

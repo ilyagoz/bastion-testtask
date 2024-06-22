@@ -1,0 +1,370 @@
+#+LATEX_HEADER: \usepackage[T2A]{fontenc}
+#+LATEX_HEADER: \usepackage{tabularx}
+#+LATEX_HEADER: \usepackage{fontspec}
+#+LATEX_HEADER: \usepackage{parskip}
+#+LATEX_HEADER: \usepackage[english,russian]{babel}
+#+LATEX_HEADER: \setmainfont{PT Serif}
+#+LATEX_HEADER: \setsansfont{PT Sans}
+#+LATEX_HEADER: \setmonofont{PT Mono}
+#+LATEX_HEADER: \usepackage[top=2cm,left=2cm,right=2cm,bottom=2cm]{geometry} % Modify margins
+#+LATEX_COMPILER: xelatex
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS: [a4paper,11pt,twoside]
+#+LANGUAGE: ru-ru
+#+OPTIONS: toc:nil num:nil author:nil date:nil
+#+SETUPFILE: ~/.emacs.d/org-themes/src/comfy_inline/comfy_inline.theme
+#+PROPERTY: header-args  :comments no :exports both :eval never-export
+
+#+TITLE: Тестовое задание
+Задание выглядит так:
+#+begin_quote
+Напиши ansible роль, устанавливающую пароль заданного пользователя (пусть будет с именем test) и флаг необходимости смены пароля при первом входе в систему.
+#+end_quote
+
+Заметим:
+- В задании не сказано, что пользователя надо создать. Поэтому
+  предположим, что он уже существует, и если не существует, то
+  создавать его не будем во избежание дополнительных усложнений;
+- В задании не сказано, какая система на целевой машине. Поскольку у
+  меня оказалась под рукой виртуальная машина с Windows, сделаем и под
+  Linux, и под Windows, но без Active Directory и прочего;
+- В задании сказано "роль", а не "плейбук". Поэтому мы делаем роль, хотя и простую.
+  
+* Роль
+
+Роль называется =user-password=. Структура каталогов:
+
+#+begin_example
+.
+├── bastion-testtask.yaml
+├── inventory
+│   └── inventory.yaml
+├── roles
+│   └── user-password
+│       └── tasks
+│           └── main.yaml
+#+end_example
+
+Основной плейбук =bastion-testtask.yaml=:
+
+#+begin_src yaml :tangle bastion-testtask.yaml
+---
+- hosts: all
+  roles:
+    - user-password
+#+end_src
+
+В =inventory.yaml= предусмотрены группы =linux= и =win=, можно
+задавать отдельно =hosts: linux= или =hosts: win=. В =inventory.yaml=
+также заданы параметры для подключения к хостам. Подробнее об этом в
+разделе [[Inventory и параметры подключения][Inventory и параметры подключения]].
+
+Имя пользователя и новый пароль берутся из переменных =user= и
+=password=, заданных в командной строке:
+
+#+begin_src bash
+  ansible-playbook ./bastion-testtask.yaml \
+		   -i inventory/inventory.yaml \
+		   --vault-password-file ../vault_pass \
+		   -e user="test" \
+		   -e password="hunter2"
+#+end_src
+
+В командной строке также указан inventory-файл и файл с паролем для
+Ansible Vault. Этим паролем шифруются параметры для доступа к серверу
+Windows. См. [[Inventory и параметры подключения][Inventory и параметры подключения]].
+
+** Задачи
+
+Мы проверяем, существует ли пользователь. Если пользователь не
+существует, мы ничего больше не делаем. Модули =ansible.builtin.user=
+и =ansible.windows.win_user= работают по-другому: если пользователь не
+найден, они его автоматически создают или удаляют, в зависимости от
+параметра =state=. Это не то, что нам нужно, поэтому мы вынуждены
+использовать другие способы:
+
+- =getent=, чтобы выяснить, существует ли пользователь в Linux;
+- =net user=, чтобы выяснить, существует ли пользователь в Windows.
+
+Задать пароль оба модуля позволяют. А вот установить флаг "пароль
+устарел" встроенными средствами позволяет только
+=ansible.windows.win_user=. В Linux приходится использовать команду
+=passwd --expire=.
+  
+#+begin_src yaml :tangle ./roles/user-password/tasks/main.yaml
+---
+- name: Проверить подключение к Windows
+  ansible.windows.win_ping:
+  when: ansible_os_family == "Windows"
+- name: Проверить подключение к Linux
+  ansible.builtin.ping:
+  when: ansible_system == "Linux"
+
+- block:
+    - name: Проверить, существует ли пользователь Linux
+      become: true
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ user }}"
+      ignore_errors: true
+      register: user_exists_linux
+    - name: Сообщить, если пользователь Linux не существует
+      ansible.builtin.fail:
+        msg: "Пользователь Linux {{ user }} не существует."
+      when: user_exists_linux.failed
+
+    - name: Сменить пароль пользователя Linux
+      become: true
+      ansible.builtin.user:
+        name: '{{ user }}'
+        update_password: always
+        password: "{{ password | password_hash }}"
+        shell: /bin/bash
+      no_log: true
+      when: not user_exists_linux.failed
+
+    - name: Установить флаг "пароль устарел"
+      become: true
+      ansible.builtin.command:
+        cmd: passwd --expire "{{ user }}"
+      when: not user_exists_linux.failed
+  when: ansible_system == "Linux"
+
+- block:  
+    - name: Проверить, существует ли пользователь Windows
+      ansible.windows.win_command:
+        cmd: net user "{{ user }}"
+      ignore_errors: true
+      register: user_exists_win
+    - name: Сообщить, если пользователь Windows не существует
+      ansible.builtin.fail:
+        msg: "Пользователь Windows {{ user }} не существует."
+      when: user_exists_win.failed
+    - name: Сменить пароль пользователя Windows
+      ansible.windows.win_user:
+        name: '{{ user }}'
+        update_password: always
+        password: "{{ password }}"
+        password_expired: true
+      no_log: true
+      when: not user_exists_win.failed
+  when: ansible_os_family == "Windows"
+#+end_src
+
+* Тестирование
+
+** Linux ВМ
+Для тестирования нам потребуется машина. Создадим ее с помощью [[https://ubuntu.com/blog/using-cloud-init-with-multipass][multipass]]:
+
+#+begin_src bash
+  multipass launch mantic -n mantic2 --cloud-init ./cloud-config.yaml
+#+end_src
+
+Почему =mantic=, а не более поздние? Потому что в =24 (noble)= более
+свежий Python, и с ним у =Ansible= проблемы. Файл =cloud-config.yaml=:
+
+#+begin_src yaml :tangle cloud-config.yaml
+  #cloud-config
+  #
+  # Потому что мы будем тестировать вход с паролем.
+  ssh_pwauth: true
+
+  users:
+    - name: ansible
+      gecos: Ansible User
+      sudo: ALL=(ALL) NOPASSWD:ALL
+      lock_passwd: true
+      shell: /bin/bash
+      ssh_authorized_keys:
+	# Мой публичный ключ.
+	- "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCzGFkQSRFoZus7piWi5CU32sao/2ST/DqOmLbAWmRKg58icjH+ae01tdQX5uqUSs+i4qsTiQQmDI/K7m4sPrrX1pZqoxKsUUADq49l6uSdbtr89s1YkuVjFObud3TWLhINCSkcd0j0EBPNodRUI3DtovFSWT6/0Xr+ZL2okdHDifozfS+TorT80mdQaSF65GzdZnmbVSFQcyUsPUCG2W1cv48TvG86gFoz3+7EdxIH6wa2Qa3rQgxjsr/y8jv58lXIai3BMnjfniKDvrX3l/QxNxysaFXdu44HmP3v5g0UDczS3LsfoJMkC4keoJylfVrJYdU1jKwi409ZvZTygqLg5U9ANRC+6a5K0EZAP0nkxZcmz5PSrP7xJ5wo58duLLU12IR/HFX3c6DvaK+LZjJMC231TE858UEANZHqVBH0i4Vj8VHoKYyAaGiHJR73kfnVu6UhTOoP1DtnU2KiJoToUbRlbKCoyngFZNtEkjwCz2aK4bn5lJmmp4qoFjq1Yu8= ivg@DESKTOP-U11D1U8"
+    - name: test
+      gecos: Test user
+      shell: /bin/bash
+      lock_passwd: false
+#+end_src
+
+В нем настроено два пользователя: =ansible= для работы через Ansible и
+=test=, как указано в задании. Пользователю =test= разрешен вход по
+паролю, пользователю =ansible= -- только по ключу. Дожидаемся создания
+ВМ. Проверяем:
+
+#+begin_src bash :results output verbatim :wrap src yaml
+  multipass list --format yaml
+#+end_src
+
+#+RESULTS:
+#+begin_src yaml
+mantic2:
+  - state: Running
+    ipv4:
+      - 192.168.112.81
+    release: Ubuntu 23.10
+#+end_src
+
+** Windows ВМ
+
+Создание виртуальной машины с Windows и настройка ее для удаленного
+управления с помощью Ansible здесь не рассматривается.
+
+** Inventory и параметры подключения
+
+К хостам на базе Linux мы подключаемся с ключом ssh. Это не требует
+дополнительной настройки, так как публичный ключ задан при создании
+ВМ. К Windows мы подключаемся с логином и паролем, поэтому в файле
+пароль нужно скрыть. Используем Ansible Vault с очень сложным паролем
+(хранится в =../vault_pass=, чтобы случайно не пустить его в =git=).
+
+#+begin_src yaml
+linux:
+  hosts:
+    192.168.112.81:
+      ansible_user: ansible
+win:
+  hosts:
+    192.168.112.178:
+      ansible_user: ansible
+      ansible_password: !vault |
+        $ANSIBLE_VAULT;1.1;AES256
+        38326635333030323437653564646361323232386331616366326236656535303564333861613238
+        6237343231336136616363663364623463356332626233310a633939323036333833656262393538
+        36636264333264386362343837363463363231383337396466633862653163383163653333396439
+        3038656662643931310a386564373961333766346635346466616234393138353038353962396437
+        6661
+      ansible_connection: winrm
+      ansible_winrm_transport: ntlm
+      ansible_port: 5985
+#+end_src
+
+Плейбук для проверки параметров подключения:
+
+#+begin_src yaml :tangle ./test_ssh.yaml
+  ---
+  - name: Check connections to Windows targets.
+    hosts: win
+    tasks:
+    - action: ansible.windows.win_ping
+  - name: Check connections to Linux targets.
+    hosts: linux
+    tasks:
+    - action: ansible.builtin.ping
+#+end_src
+
+Запускаем так:
+
+#+begin_src bash :results output verbatim :wrap src sh
+  ansible-playbook -v ./test_ssh.yaml \
+		   -i inventory/inventory.yaml \
+		   --vault-password-file ../vault_pass
+#+end_src
+
+#+RESULTS:
+#+begin_src sh
+Using /etc/ansible/ansible.cfg as config file
+
+PLAY [Check connections to Windows targets.] ***********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [192.168.112.178]
+
+TASK [ansible.windows.win_ping] ************************************************
+ok: [192.168.112.178] => {"changed": false, "ping": "pong"}
+
+PLAY [Check connections to Linux targets.] *************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [192.168.112.81]
+
+TASK [ansible.builtin.ping] ****************************************************
+ok: [192.168.112.81] => {"changed": false, "ping": "pong"}
+
+PLAY RECAP *********************************************************************
+192.168.112.178            : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+192.168.112.81             : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+#+end_src
+
+Подключение нормально. 
+
+** Основной плейбук
+
+#+begin_src bash
+  ansible-playbook ./bastion-testtask.yaml \
+		   -i inventory/inventory.yaml \
+		   --vault-password-file ../vault_pass \
+		   -e user="test" \
+		   -e password="hunter2"
+#+end_src
+
+#+begin_src text
+PLAY [all] ********************************************************************************************************************************************************************************************************************************************************************************
+
+TASK [Gathering Facts] ********************************************************************************************************************************************************************************************************************************************************************
+[WARNING]: Platform linux on host 192.168.112.81 is using the discovered Python interpreter at /usr/bin/python3.11, but future installation of another Python interpreter could change the meaning of that path. See https://docs.ansible.com/ansible-
+core/2.17/reference_appendices/interpreter_discovery.html for more information.
+ok: [192.168.112.81]
+ok: [192.168.112.178]
+
+TASK [user-password : Проверить подключение к Windows] ************************************************************************************************************************************************************************************************************************************
+skipping: [192.168.112.81]
+ok: [192.168.112.178]
+
+TASK [user-password : Проверить подключение к Linux] **************************************************************************************************************************************************************************************************************************************
+skipping: [192.168.112.178]
+ok: [192.168.112.81]
+
+TASK [user-password : Проверить, существует ли пользователь Linux] ************************************************************************************************************************************************************************************************************************
+skipping: [192.168.112.178]
+ok: [192.168.112.81]
+
+TASK [user-password : Сообщить, если пользователь Linux не существует] ********************************************************************************************************************************************************************************************************************
+skipping: [192.168.112.81]
+skipping: [192.168.112.178]
+
+TASK [user-password : Сменить пароль пользователя Linux] **********************************************************************************************************************************************************************************************************************************
+skipping: [192.168.112.178]
+changed: [192.168.112.81]
+
+TASK [user-password : Установить флаг "пароль устарел"] ***********************************************************************************************************************************************************************************************************************************
+skipping: [192.168.112.178]
+changed: [192.168.112.81]
+
+TASK [user-password : Проверить, существует ли пользователь Windows] **********************************************************************************************************************************************************************************************************************
+skipping: [192.168.112.81]
+changed: [192.168.112.178]
+
+TASK [user-password : Сообщить, если пользователь Windows не существует] ******************************************************************************************************************************************************************************************************************
+skipping: [192.168.112.81]
+skipping: [192.168.112.178]
+
+TASK [user-password : Сменить пароль пользователя Windows] ********************************************************************************************************************************************************************************************************************************
+skipping: [192.168.112.81]
+changed: [192.168.112.178]
+
+PLAY RECAP ********************************************************************************************************************************************************************************************************************************************************************************
+192.168.112.178            : ok=4    changed=2    unreachable=0    failed=0    skipped=6    rescued=0    ignored=0   
+192.168.112.81             : ok=5    changed=2    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+#+end_src
+
+Пробуем войти:
+
+#+begin_src text
+    ssh test@192.168.112.81
+    test@192.168.112.81's password: 
+    You are required to change your password immediately (administrator enforced).
+    Welcome to Ubuntu 23.10 (GNU/Linux 6.5.0-41-generic x86_64)
+
+    [...]
+
+    Last login: Sun Jun 23 04:47:13 2024 from 192.168.112.1
+    WARNING: Your password has expired.
+    You must change your password now and login again!
+    Changing password for test.
+    Current password: 
+    New password:
+    Retype new password: 
+    passwd: password updated successfully
+    Connection to 192.168.112.81 closed.
+#+end_src
+
+Как видим, пароль заставляют сменить. На ВМ с Windows тоже все работает. Задание выполнено.

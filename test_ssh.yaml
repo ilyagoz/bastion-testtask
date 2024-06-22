@@ -1,0 +1,9 @@
+---
+- name: Check connections to Windows targets.
+  hosts: win
+  tasks:
+  - action: ansible.windows.win_ping
+- name: Check connections to Linux targets.
+  hosts: linux
+  tasks:
+  - action: ansible.builtin.ping
