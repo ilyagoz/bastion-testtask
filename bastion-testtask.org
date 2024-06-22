@@ -176,8 +176,8 @@ Windows. См. [[Inventory и параметры подключения][Invento
       lock_passwd: true
       shell: /bin/bash
       ssh_authorized_keys:
-	# Мой публичный ключ.
-	- "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCzGFkQSRFoZus7piWi5CU32sao/2ST/DqOmLbAWmRKg58icjH+ae01tdQX5uqUSs+i4qsTiQQmDI/K7m4sPrrX1pZqoxKsUUADq49l6uSdbtr89s1YkuVjFObud3TWLhINCSkcd0j0EBPNodRUI3DtovFSWT6/0Xr+ZL2okdHDifozfS+TorT80mdQaSF65GzdZnmbVSFQcyUsPUCG2W1cv48TvG86gFoz3+7EdxIH6wa2Qa3rQgxjsr/y8jv58lXIai3BMnjfniKDvrX3l/QxNxysaFXdu44HmP3v5g0UDczS3LsfoJMkC4keoJylfVrJYdU1jKwi409ZvZTygqLg5U9ANRC+6a5K0EZAP0nkxZcmz5PSrP7xJ5wo58duLLU12IR/HFX3c6DvaK+LZjJMC231TE858UEANZHqVBH0i4Vj8VHoKYyAaGiHJR73kfnVu6UhTOoP1DtnU2KiJoToUbRlbKCoyngFZNtEkjwCz2aK4bn5lJmmp4qoFjq1Yu8= ivg@DESKTOP-U11D1U8"
+        # Мой публичный ключ.
+        - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCzGFkQSRFoZus7piWi5CU32sao/2ST/DqOmLbAWmRKg58icjH+ae01tdQX5uqUSs+i4qsTiQQmDI/K7m4sPrrX1pZqoxKsUUADq49l6uSdbtr89s1YkuVjFObud3TWLhINCSkcd0j0EBPNodRUI3DtovFSWT6/0Xr+ZL2okdHDifozfS+TorT80mdQaSF65GzdZnmbVSFQcyUsPUCG2W1cv48TvG86gFoz3+7EdxIH6wa2Qa3rQgxjsr/y8jv58lXIai3BMnjfniKDvrX3l/QxNxysaFXdu44HmP3v5g0UDczS3LsfoJMkC4keoJylfVrJYdU1jKwi409ZvZTygqLg5U9ANRC+6a5K0EZAP0nkxZcmz5PSrP7xJ5wo58duLLU12IR/HFX3c6DvaK+LZjJMC231TE858UEANZHqVBH0i4Vj8VHoKYyAaGiHJR73kfnVu6UhTOoP1DtnU2KiJoToUbRlbKCoyngFZNtEkjwCz2aK4bn5lJmmp4qoFjq1Yu8= ivg@DESKTOP-U11D1U8"
     - name: test
       gecos: Test user
       shell: /bin/bash
@@ -216,16 +216,16 @@ mantic2:
 (хранится в =../vault_pass=, чтобы случайно не пустить его в =git=).
 
 #+begin_src yaml
-linux:
-  hosts:
-    192.168.112.81:
+  linux:
+    hosts:
+      192.168.112.81:
       ansible_user: ansible
-win:
-  hosts:
-    192.168.112.178:
+  win:
+    hosts:
+      192.168.112.178:
       ansible_user: ansible
       ansible_password: !vault |
-        $ANSIBLE_VAULT;1.1;AES256
+       	$ANSIBLE_VAULT;1.1;AES256
         38326635333030323437653564646361323232386331616366326236656535303564333861613238
         6237343231336136616363663364623463356332626233310a633939323036333833656262393538
         36636264333264386362343837363463363231383337396466633862653163383163653333396439
